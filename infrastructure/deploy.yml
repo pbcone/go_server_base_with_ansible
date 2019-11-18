@@ -3,7 +3,17 @@
 
 # Pulls server from github and builds server executable configured for ec2
 - hosts: localhost
+  var:
+    server_git_repo: ##ADD SERVER GIT REPO INFO
   tasks:
+  - name: get server directory informaiton
+    stat:
+      path: ../server/ #ADD PATH TO SERVER
+    register: server
+
+  - name: clone server repository 
+    shell: git clone {{server_git_repo}}
+    when: server.stat.isdir is not defined
   - name: checkout master
     shell: git checkout master
     args:
