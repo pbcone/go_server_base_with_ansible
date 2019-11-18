@@ -1,0 +1,121 @@
+---
+# ansible-playbook createHosts.yml
+
+- hosts: localhost
+  connection: local
+  become: False
+
+  vars:
+      access_key: ""
+      secret_key: ""
+
+  tasks:
+
+    - name: Setting up EC2 Security Group
+      ec2_group:
+        name: EC2_Security_Grp
+        description: Rules Allowing traffic on port 22 and 80
+        region: us-west-2
+        rules:
+          - proto: tcp
+            from_port: 8080 
+            to_port: 8080
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+
+    - name: Setting up ALB Security Group
+      ec2_group:
+        name: ALB_Security_Grp
+        description: Rules Allowing traffic on HTTPS only
+        region: us-west-2
+        rules:
+          - proto: tcp
+            from_port: 443
+            to_port: 443
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+    
+    - name: Provision a EC2 Instance for Go Service
+      ec2:
+        ec2_access_key: "{{access_key}}"
+        ec2_secret_key: "{{secret_key}}" 
+        key_name: goServerEC2
+        region: us-west-2
+        instance_type: t2.micro
+        image: ami-06f2f779464715dc5
+        wait: yes
+        wait_timeout: 500
+        count: 1
+        instance_tags:
+          Name: goServer
+          Owner: #Add owner here
+        instance_profile_name: #define a service role for ec2 here
+        monitoring: no
+        vpc_subnet_id: #Add VPC here
+        assign_public_ip: yes
+        group: EC2_Security_Grp
+        user_data: "Content-Type: multipart/mixed; boundary=\"//\"\nMIME-Version: 1.0\n--//\nContent-Type: text/cloud-config; charset=\"us-ascii\"\nMIME-Version: 1.0\nContent-Transfer-Encoding: 7bit\nContent-Disposition: attachment; filename=\"cloud-config.txt\"\n#cloud-config\ncloud_final_modules:\n- [scripts-user, always]\n--//\nContent-Type: text/x-shellscript; charset=\"us-ascii\"\nMIME-Version: 1.0\nContent-Transfer-Encoding: 7bit\nContent-Disposition: attachment; filename=\"userdata.txt\"\n#!/bin/bash\nnohup ~ubuntu/goServer &\n--//"
+      register: ec2_out
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ item.public_dns_name }}"
+        port: 22
+        delay: 30
+        timeout: 320
+      loop: "{{ ec2_out.instances }}"
+
+    - name: Add Server to List of Hosts
+      copy: 
+        dest: ./inventory/hosts
+        content: "[ubuntu] \n{{ec2_out.instances[0].public_ip}} ansible_ssh_private_key_file=./ssh/EC2.pem"
+   
+    - name: Create Target Group
+      elb_target_group:
+        aws_access_key: "{{access_key}}"
+        aws_secret_key: "{{secret_key}}"
+        name: ServiceTargetGroup
+        protocol: http
+        port: 80
+        vpc_id: vpc-67a0a61e
+        health_check_path: /
+        successful_response_codes: "200,250-260"
+        targets:
+          - Id: "{{ ec2_out.instance_ids[0] }}"
+            Port: 8080
+        state: present
+        wait_timeout: 200
+        wait: False
+
+    - name: Setting up an Application Load Balancer
+      elb_application_lb:
+        aws_access_key: "{{access_key}}"
+        aws_secret_key: "{{secret_key}}"
+        name: serverALB
+        security_groups:
+          - ALB_Security_Grp
+        subnets:
+          - subnet-3372174a
+          - subnet-fb0a8db0
+          - subnet-30116c6a
+          - subnet-83fa27a8
+        listeners:
+          - Protocol: HTTPS
+            Port: 443 
+            SslPolicy: ELBSecurityPolicy-2015-05
+            Certificates: 
+              - CertificateArn: # provide ssl cert here created by ACM
+            DefaultActions:
+              - Type: forward
+                TargetGroupName: ServiceTargetGroup
+        state: present
+
+

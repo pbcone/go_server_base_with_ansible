@@ -1,0 +1,32 @@
+---
+# ansible-playbook deployToHosts.yml
+
+# Pulls server from github and builds server executable configured for ec2
+- hosts: localhost
+  tasks:
+  - name: checkout master
+    shell: git checkout master
+    args:
+      chdir: ./server
+  - name: pull master
+    shell: git pull
+    args:
+      chdir: ./server
+
+  - name: Build Server Executable
+    shell: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o goServer -v
+    args:
+      chdir: ./server
+
+# Moves the server executable to the EC2
+- hosts: "*"
+  tasks:
+  - name: Copy Files to server 
+    copy:
+      src: server/goServer
+      dest: ./
+      mode: 0777
+    register: copyOut
+  - name: Restart the server
+    become: yes
+    reboot:

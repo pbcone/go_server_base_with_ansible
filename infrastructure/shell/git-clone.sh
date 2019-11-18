@@ -1,0 +1,1 @@
+echo -e $("git clone git@github.com:**Server repo here**")

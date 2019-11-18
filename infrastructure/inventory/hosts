@@ -1,0 +1,2 @@
+[ubuntu] 
+34.220.129.126 ansible_ssh_private_key_file=./ssh/EC2.pem
